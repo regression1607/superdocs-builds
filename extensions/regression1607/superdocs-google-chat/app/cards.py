@@ -23,12 +23,16 @@ def updated(response: dict) -> dict:
     return {"actionResponse": {"type": "UPDATE_MESSAGE"}, **response}
 
 
-def summary_card(*, doc_title: str, doc_link: str | None, request: str, produced: str) -> dict:
+def summary_card(*, doc_title: str, doc_link: str | None, request: str, produced: str,
+                 reference: str | None = None) -> dict:
     """Posted in-thread after the app drafts/edits a document."""
     widgets = [
         {"decoratedText": {"topLabel": "Request", "text": request, "wrapText": True}},
         {"decoratedText": {"topLabel": "Produced", "text": produced, "wrapText": True}},
     ]
+    if reference:
+        widgets.insert(1, {"decoratedText": {"topLabel": "Referenced", "text": reference,
+                                             "wrapText": True}})
     sections = [{"widgets": widgets}]
     if doc_link:
         sections.append({"widgets": [{"buttonList": {"buttons": [

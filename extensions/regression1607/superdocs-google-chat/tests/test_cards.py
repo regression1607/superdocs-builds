@@ -18,6 +18,12 @@ def test_summary_card_omits_button_without_link():
     assert not _has(c, "Download current draft")
 
 
+def test_summary_card_names_reference_when_present():
+    c = cards.summary_card(doc_title="2025", doc_link=None, request="r", produced="p",
+                           reference="Acme 2024 Renewal")
+    assert _has(c, "Referenced") and _has(c, "Acme 2024 Renewal")
+
+
 def test_approval_card_has_per_item_and_bulk_buttons():
     changes = [Change("c1aaaa", "edit", "why one"), Change("c2bbbb", "delete", "why two", "approved")]
     c = cards.approval_card(session_id="s1", job_id="j1", doc_title="Doc", changes=changes)

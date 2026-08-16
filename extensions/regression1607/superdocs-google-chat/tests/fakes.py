@@ -47,3 +47,17 @@ class FakeSuperDocs:
         self.calls.append(("download", session_id, fmt))
         return {"download_url": f"https://signed.example/{session_id}.{fmt}",
                 "filename": f"{session_id}.{fmt}", "expires_in_seconds": 900}
+
+    def session_documents(self, session_id):
+        self.calls.append(("roster", session_id))
+        return [{"document_id": "doc_primary", "durable_document_id": f"dur-{session_id}",
+                 "title": "Doc", "focused": True}]
+
+    def focused_durable_id(self, session_id):
+        self.calls.append(("durable", session_id))
+        return f"dur-{session_id}"
+
+    def open_documents(self, session_id, document_ids):
+        self.calls.append(("open_docs", session_id, tuple(document_ids)))
+        return {"session_id": session_id, "opened": list(document_ids),
+                "documents": [{"title": "Doc", "focused": True}]}

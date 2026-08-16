@@ -102,22 +102,38 @@ def test_approve_all_applies_and_links_download():
 
 
 def test_using_last_years_reuses_session_no_reupload():
+    # "revise it" is a follow-up → edit the same doc by reusing its session.
     fake, store = FakeSuperDocs(), Store()
     _, first = _draft(fake, store)
     uploads_before = sum(1 for c in fake.calls if c[0] == "upload")
-    handle_event(_msg("@app now shorten it using last year's tone"), fake, store, seed_template=SEED)
+    handle_event(_msg("@app revise it to be shorter"), fake, store, seed_template=SEED)
     uploads_after = sum(1 for c in fake.calls if c[0] == "upload")
     assert uploads_after == uploads_before  # continuity: no fresh seed upload
-    # Same session reused for genuine document continuity.
     assert store.recent_session("spaces/AAA").session_id == first.session_id
 
 
-def test_no_changes_reports_already_satisfied():
+def test_reference_opens_prior_doc_as_reference_tab():
+    # "using last year's" → open the prior produced doc as a tab, draft a NEW doc.
+    fake, store = FakeSuperDocs(), Store()
+    _, first = _draft(fake, store)
+    # Apply so the prior doc gets a durable File id it can be referenced by.
+    handle_event(_click("approve_all", first.session_id, first.job_id), fake, store, seed_template=SEED)
+    fake.calls.clear()
+    resp = handle_event(_msg("@app draft the 2025 renewal using last year's letter"),
+                        fake, store, seed_template=SEED)
+    opened = [c for c in fake.calls if c[0] == "open_docs"]
+    assert opened and opened[0][2] == (f"dur-{first.session_id}",)  # prior durable id opened as tab
+    assert not any(c[0] == "upload" for c in fake.calls)  # referenced, not re-seeded
+    assert "Referenced" in str(resp)  # summary card names the source
+
+
+def test_no_changes_reports_ready_with_download():
     fake, store = FakeSuperDocs(changes=[]), Store()
     resp, _ = _draft(fake, store)
     assert resp["cardsV2"][0]["cardId"] == "summary"
+    assert any(c[0] == "download" for c in fake.calls)  # ready doc is downloadable
     produced, pending = store.digest("spaces/AAA")
-    assert produced[0]["state"] == "no changes needed" and not pending
+    assert produced[0]["state"] == "ready — nothing to review" and not pending
 
 
 def test_expired_review_click_is_handled():

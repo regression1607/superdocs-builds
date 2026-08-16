@@ -33,6 +33,7 @@ class Review:
     state: str = "pending review"  # "pending review" | "applied" | "no changes"
     applied: int = 0
     rejected: int = 0
+    durable_id: str | None = None  # File id of the produced doc, for later reference
 
     def decided(self) -> bool:
         return all(c.decision is not None for c in self.changes)
@@ -72,10 +73,28 @@ class Store:
 
     def recent_session(self, space: str) -> Review | None:
         """The space's most recently opened review — the session a follow-up
-        ("using last year's") should reuse for genuine document continuity."""
+        ("revise it") should reuse for genuine document continuity."""
         with self._lock:
             reviews = list(self._space(space).reviews.values())
         return reviews[-1] if reviews else None
+
+    def recent_source(self, space: str) -> Review | None:
+        """The most recent produced document that has a durable File id — the one
+        a "using last year's" request can open as a reference tab."""
+        with self._lock:
+            reviews = list(self._space(space).reviews.values())
+        for r in reversed(reviews):
+            if r.durable_id:
+                return r
+        return None
+
+    def set_durable(self, space: str, session_id: str, durable_id: str | None) -> None:
+        if not durable_id:
+            return
+        with self._lock:
+            review = self._space(space).reviews.get(session_id)
+            if review:
+                review.durable_id = durable_id
 
     def set_decision(self, space: str, session_id: str, change_id: str, approved: bool) -> Review | None:
         with self._lock:
@@ -113,7 +132,7 @@ class Store:
                 pending.append({"title": r.doc_title,
                                 "state": f"{undecided} change(s) awaiting review"})
             else:
-                summary = ("no changes needed" if r.state == "no changes"
+                summary = ("ready — nothing to review" if r.state == "no changes"
                            else f"{r.applied} applied, {r.rejected} rejected")
                 produced.append({"title": r.doc_title, "state": summary})
         return produced, pending

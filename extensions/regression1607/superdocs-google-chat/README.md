@@ -29,9 +29,12 @@ Draft, edit, and approve documents **without leaving Google Chat** — powered b
 6. Say **`digest`** and it summarizes what the space produced and what's still
    waiting; a `POST /tasks/daily-digest` endpoint lets a scheduler push the same
    digest daily — so nothing sits silently forever.
-7. Ask a follow-up that references prior work (*"...using last year's"*, *"revise
-   it"*) and it **reuses the space's most recent SuperDocs session**, so the new
-   instruction genuinely builds on the prior document.
+7. Ask a follow-up that **edits the same doc** (*"revise it"*, *"update it"*) and it
+   reuses that document's SuperDocs session. Ask one that **references a prior doc**
+   (*"...using last year's"*, *"based on the previous"*) and it opens that produced
+   document as a **reference tab** (`POST /v1/sessions/{id}/documents/open`) and
+   drafts a **new** document from it — true multi-document, and non-destructive: the
+   referenced doc is never mutated.
 
 ```
 @app draft the renewal letter for Acme
@@ -59,6 +62,10 @@ Draft, edit, and approve documents **without leaving Google Chat** — powered b
 - **The daily digest** is exposed as a scheduler-hit endpoint. Pushing the card
   into a space requires Chat service-account credentials (a deployment concern);
   without them the endpoint returns the per-space digest payload for pull/preview.
+- **New-document creation auto-applies.** When a reference draft creates a brand-new
+  document, SuperDocs applies the creation immediately, so there may be nothing to
+  review. The app then reports the document as *ready to download* rather than
+  claiming "no changes were needed" — the result card never misrepresents what happened.
 
 ## Why polling (and the double-parse note)
 
@@ -73,13 +80,14 @@ unit test locks that behavior in.
 
 ```
 app/
-  superdocs.py   SuperDocsClient — the 4 calls + poll + parse_pending_changes + download_url
+  superdocs.py   SuperDocsClient — the 4 calls + poll + parse_pending_changes +
+                 download_url + multi-document (session roster / documents/open)
   cards.py       Google Chat cardsV2 builders (pure); item-by-item + UPDATE_MESSAGE
-  store.py       per-space review state: per-change decisions + digest (lock-guarded)
+  store.py       per-space review state: per-change decisions + durable source ids + digest
   dispatch.py    pure event→response handlers (MESSAGE, CARD_CLICKED, ADDED_TO_SPACE)
   auth.py        verifies Google Chat's signed JWT (opt-in via GOOGLE_CHAT_AUDIENCE)
   main.py        thin FastAPI webhook + /tasks/daily-digest + /health
-tests/           35 tests, fully mocked — no network, no API key
+tests/           39 tests, fully mocked — no network, no API key
 deployment/      chat-app-manifest.json for sideloading
 ```
 
@@ -91,7 +99,7 @@ client injected, so the entire flow is tested with a fake and **no API key**.
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-python -m pytest -q          # 35 passed
+python -m pytest -q          # 39 passed
 ```
 
 ## Run locally

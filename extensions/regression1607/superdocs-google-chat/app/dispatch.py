@@ -14,9 +14,9 @@ Flow:
                                                    decisions, export, post a result card.
   @mention "digest"          → MESSAGE event    → post the space's digest.
 
-"Using last year's" (and similar) reuses the space's most recent SuperDocs
-session, so the new instruction genuinely builds on the prior document instead of
-starting from a blank seed.
+"Using last year's" opens that prior document as a reference tab in a fresh
+session and drafts a NEW document from it (true multi-document); "revise it"
+reuses the same session to edit the same document.
 """
 
 from __future__ import annotations
@@ -29,9 +29,11 @@ from app.store import Store
 from app.superdocs import SuperDocsClient
 
 _MENTION = re.compile(r"<users/\d+>|@\S+")
-# References to prior work → reuse the space's last session for genuine continuity.
-_PRIOR = re.compile(r"\b(last year'?s|last time|previous|prior|earlier|the same|again|update it|revise|based on)\b",
-                    re.IGNORECASE)
+# "using last year's" / "based on the previous" → open that prior document as a
+# reference tab and draft a NEW document from it (true multi-document).
+_REFERENCE = re.compile(r"\b(last year'?s|previous|prior|earlier|based on)\b", re.IGNORECASE)
+# "revise it" / "update it" → edit the SAME document by reusing its session.
+_FOLLOWUP = re.compile(r"\b(revise|update it|the same|again|last time)\b", re.IGNORECASE)
 
 
 def _clean(text: str) -> str:
@@ -67,15 +69,9 @@ def _on_message(event: dict, client: SuperDocsClient, store: Store, *,
         produced, pending = store.digest(space)
         return cards.digest_card(produced=produced, pending=pending)
 
-    # Continuity: reuse the space's most recent session when the ask references prior work.
-    prior = store.recent_session(space) if _PRIOR.search(request) else None
-    if prior:
-        session_id, doc_title, document_html = prior.session_id, prior.doc_title, None
-    else:
-        session_id, doc_title, document_html = f"chat-{uuid.uuid4().hex[:12]}", _title_from(request), seed_template
-        client.upload_document(session_id, f"{doc_title}.html", seed_template)
+    session_id, doc_title, document_html, edit_request, reference = _plan(client, store, space, request, seed_template)
 
-    job = _run_edit(client, session_id, request, document_html)
+    job = _run_edit(client, session_id, edit_request, document_html)
     if job is None or job.get("status") == "failed":
         err = (job or {}).get("error") or "the model could not complete that request"
         return cards.text(f"Sorry — SuperDocs could not complete that: {err}")
@@ -85,17 +81,44 @@ def _on_message(event: dict, client: SuperDocsClient, store: Store, *,
     review = store.open_review(space, session_id, job_id, doc_title, request, changes)
 
     if not changes:
+        # No pending review — either the doc already satisfied the ask, or a brand-new
+        # document was created (SuperDocs auto-applies creation). Either way it's ready.
+        store.set_durable(space, session_id, client.focused_durable_id(session_id))
         store.mark_applied(space, session_id, 0, 0, state="no changes")
-        return cards.summary_card(doc_title=doc_title, doc_link=None, request=request,
-                                  produced="No changes were needed — the document already satisfies it.")
+        link, _ = _download(client, session_id, export_format)
+        return cards.summary_card(doc_title=doc_title, doc_link=link, request=request, reference=reference,
+                                  produced="Nothing to review — the current document is ready to download.")
 
     draft_link, _ = _download(client, session_id, export_format)
     summary = cards.summary_card(
-        doc_title=doc_title, doc_link=draft_link, request=request,
+        doc_title=doc_title, doc_link=draft_link, request=request, reference=reference,
         produced=f"{len(changes)} proposed change(s) awaiting review.")
     approval = cards.approval_card(session_id=session_id, job_id=job_id,
                                    doc_title=doc_title, changes=review.changes)
     return {"cardsV2": [*summary["cardsV2"], *approval["cardsV2"]]}
+
+
+def _plan(client: SuperDocsClient, store: Store, space: str, request: str, seed_template: str):
+    """Choose how to source the working document:
+      reference  → open a prior produced doc as a tab and draft a NEW doc from it,
+      follow-up  → reuse the space's last session to edit the same doc,
+      otherwise  → upload a fresh seed.
+    Returns (session_id, doc_title, document_html, edit_request, reference_title)."""
+    source = store.recent_source(space) if _REFERENCE.search(request) else None
+    if source and source.durable_id:
+        session_id = f"chat-{uuid.uuid4().hex[:12]}"
+        client.open_documents(session_id, [source.durable_id])  # prior doc as a reference tab
+        edit_request = (f"{request}\n\nUse the already-open document '{source.doc_title}' as reference, "
+                        "and put the result in a NEW document.")
+        return session_id, _title_from(request), None, edit_request, source.doc_title
+
+    followup = store.recent_session(space) if _FOLLOWUP.search(request) else None
+    if followup:
+        return followup.session_id, followup.doc_title, None, request, None
+
+    session_id, doc_title = f"chat-{uuid.uuid4().hex[:12]}", _title_from(request)
+    client.upload_document(session_id, f"{doc_title}.html", seed_template)
+    return session_id, doc_title, seed_template, request, None
 
 
 def _on_card_click(event: dict, client: SuperDocsClient, store: Store, *, export_format: str) -> dict:
@@ -135,6 +158,7 @@ def _apply(client: SuperDocsClient, store: Store, space: str, review, export_for
     if applied:
         client.poll_job(review.job_id)  # let the job resume past approval to completion
         download, filename = _download(client, review.session_id, export_format)
+        store.set_durable(space, review.session_id, client.focused_durable_id(review.session_id))
     store.mark_applied(space, review.session_id, applied, rejected)
     return cards.updated(cards.result_card(doc_title=review.doc_title, applied=applied,
                                            rejected=rejected, download_url=download, filename=filename))

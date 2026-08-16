@@ -83,6 +83,26 @@ def test_download_url_returns_signed_link():
     assert dl["download_url"].startswith("https://") and dl["filename"] == "x.docx"
 
 
+def test_focused_durable_id_reads_roster():
+    def handler(req):
+        return httpx.Response(200, json={"documents": [
+            {"document_id": "d0", "durable_document_id": "dur-a", "focused": False},
+            {"document_id": "d1", "durable_document_id": "dur-b", "focused": True}]})
+
+    assert _client(handler).focused_durable_id("s1") == "dur-b"
+
+
+def test_open_documents_posts_document_ids():
+    seen = {}
+
+    def handler(req):
+        seen["body"] = json.loads(req.content)
+        return httpx.Response(200, json={"opened": ["dur-b"], "documents": []})
+
+    _client(handler).open_documents("s2", ["dur-b"])
+    assert seen["body"]["document_ids"] == ["dur-b"]
+
+
 def test_error_status_raises():
     c = _client(lambda r: httpx.Response(429, text="rate limited"))
     with pytest.raises(SuperDocsError):

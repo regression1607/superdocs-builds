@@ -132,6 +132,25 @@ class SuperDocsClient:
         Returns the ``{download_url, filename, expires_at, ...}`` dict."""
         return self._post_json("/v1/downloads", {"session_id": session_id, "format": fmt})
 
+    # multi-document sessions (tabs) --------------------------------------------
+    def session_documents(self, session_id: str) -> list[dict]:
+        """Roster of open documents in the session (each with a durable_document_id)."""
+        return self._get_json(f"/v1/sessions/{session_id}/documents").get("documents", [])
+
+    def focused_durable_id(self, session_id: str) -> str | None:
+        """Durable File id of the focused document — the id another session can
+        re-open as a tab. Null until the document has been saved."""
+        for d in self.session_documents(session_id):
+            if d.get("focused"):
+                return d.get("durable_document_id")
+        return None
+
+    def open_documents(self, session_id: str, document_ids: list[str]) -> dict:
+        """Open saved durable documents into ``session_id`` as tabs (shared, not
+        copied). Used to draft a new document with a prior one open as reference."""
+        return self._post_json(f"/v1/sessions/{session_id}/documents/open",
+                               {"document_ids": document_ids})
+
     # helpers -----------------------------------------------------------------
     def _post_json(self, path: str, body: dict) -> dict:
         r = self._http.post(
