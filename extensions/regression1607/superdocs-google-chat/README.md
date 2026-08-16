@@ -110,20 +110,104 @@ export $(grep -v '^#' .env | xargs)
 uvicorn app.main:app --reload --port 8080
 ```
 
-Expose it (e.g. `ngrok http 8080`) and point a Google Chat app's HTTP endpoint at
-the public URL using `deployment/chat-app-manifest.json`. `GET /health` reports
-whether the key is configured and whether request auth is being enforced.
+`GET /health` reports whether the key is configured and whether request auth is
+being enforced.
+
+## Deploy to Google Chat (step by step)
+
+Anyone can go from a fresh clone to a working app in a Chat space in ~10 minutes.
+You need a Google account, a Google Cloud project, and the app running somewhere
+Google can reach over HTTPS (ngrok is easiest for a demo).
+
+### 1. Run the app and expose it
+
+```bash
+# terminal 1 — the app
+cp .env.example .env                    # put your SuperDocs sk_ key in .env
+export $(grep -v '^#' .env | xargs)
+uvicorn app.main:app --reload --port 8080
+
+# terminal 2 — a public HTTPS tunnel to it
+ngrok http 8080
+```
+
+Copy the HTTPS forwarding URL ngrok prints, e.g. `https://ab12-34-56.ngrok-free.app`.
+That is your **App URL** below. Verify it works: `curl https://<your-url>/health`
+should return JSON.
+
+### 2. Create the Google Cloud project and enable the Chat API
+
+1. Go to <https://console.cloud.google.com/> and create (or select) a project.
+2. Enable the **Google Chat API**:
+   APIs & Services → Library → search "Google Chat API" → **Enable**
+   (or run `gcloud services enable chat.googleapis.com`).
+
+### 3. Configure the Chat app
+
+Open **Google Chat API → Configuration** in the console and fill it in — the
+values mirror `deployment/chat-app-manifest.json`:
+
+| Field | Value |
+|---|---|
+| **App name** | `SuperDocs` |
+| **Avatar URL** | any square PNG (e.g. `https://use.superdocs.app/favicon.png`) |
+| **Description** | `Draft and edit documents in chat, with human approval, powered by SuperDocs.` |
+| **Functionality** | ✅ Receive 1:1 messages · ✅ Join spaces & group conversations |
+| **Connection settings** | **HTTP endpoint URL** = your App URL **with a trailing slash**, e.g. `https://ab12-34-56.ngrok-free.app/` |
+| **Authentication Audience** | **App URL** (recommended) — the same URL |
+| **Visibility** | Add your own Google email so only you can see it while testing |
+
+Click **Save**. (There is no separate "upload manifest" button in the console —
+the manifest in `deployment/` is the reference for these fields and for anyone
+scripting the config via the Chat API.)
+
+### 4. (Recommended) turn on request verification
+
+So the webhook only trusts real Google Chat calls, set the audience you entered
+above and restart the app:
+
+```bash
+# in terminal 1 (.env or export)
+GOOGLE_CHAT_AUDIENCE=https://ab12-34-56.ngrok-free.app   # your App URL
+```
+
+`GET /health` will then show `"auth_enforced": true`, and any request without a
+valid Google-signed JWT gets a `401`. Leave it unset for the very first smoke test
+if you want to rule out auth as a variable.
+
+### 5. Test it in a space
+
+1. In Google Chat, start a DM with the app (search its name) or add it to a space:
+   **+ New chat / Add people & apps** → your app.
+2. Mention it with a request:
+   `@SuperDocs draft the renewal letter for Acme`
+3. It replies with a **summary card** (Download current draft) and an
+   **item-by-item approval card**. Approve/reject changes, then **Apply decisions**;
+   the result card links the finished `.docx`.
+4. Try `@SuperDocs draft the 2025 renewal based on last year's` to see the
+   multi-document reference draft, and `@SuperDocs digest` for the space summary.
+
+> First request in a fresh session can be slow or fail while SuperDocs warms up —
+> the app retries once automatically; if you still see an error, send it again.
+
+### 6. Capture the screenshot for the PR
+
+With the approval card visible in a space, take a screenshot and save it to
+`docs/approval-card.png` (referenced in this README). Keep secrets out of frame.
 
 ### Hardening & scheduling (production)
 
 - **Verify the caller is Google Chat.** Set `GOOGLE_CHAT_AUDIENCE` to the audience
-  configured on your Chat app connection (project number or app URL). The webhook
+  configured on your Chat app connection (App URL, or the project number). The webhook
   then rejects any request whose Google-signed JWT doesn't verify (`401`). Left
   unset, auth is disabled for local dev. Requires `google-auth` (in requirements).
 - **Daily digest.** Point a scheduler (e.g. Cloud Scheduler) at
   `POST /tasks/daily-digest?token=$DIGEST_TOKEN` once a day; it returns one digest
   card per space. Pushing the card into the space itself needs Chat
   service-account credentials — a deployment step, documented here rather than faked.
+- **Stable hosting.** For anything beyond a demo, replace the ngrok tunnel with a
+  real deployment (Cloud Run, Fly.io, a VM) and use that fixed HTTPS URL as the App
+  URL and audience.
 
 ## Configuration
 
