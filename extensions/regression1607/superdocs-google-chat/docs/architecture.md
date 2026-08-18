@@ -69,6 +69,62 @@ sequenceDiagram
   A-->>U: result card + signed .docx link
 ```
 
+## UI — what the reviewer sees in the Chat space
+
+The app replies with Google Chat `cardsV2`. The mockups below map 1:1 to the
+builders in `cards.py`; item clicks re-render the *same* message in place
+(`actionResponse: UPDATE_MESSAGE`).
+
+```
+① Summary card (posted in-thread after drafting)      ② Item-by-item approval card
+┌───────────────────────────────────────┐            ┌───────────────────────────────────────┐
+│ 🦉 SuperDocs                           │            │ Review proposed changes               │
+│    Acme Renewal Letter                 │            │ Acme Renewal Letter — 2 change(s)     │
+├───────────────────────────────────────┤            ├───────────────────────────────────────┤
+│ Request                               │            │ ⬜️ EDIT · 07dcd4d7                     │
+│ draft the renewal letter for Acme     │            │ Insert a formal closing paragraph…    │
+│                                       │            │   [ ✅ Approve ]   [ ❌ Reject ]        │
+│ Referenced   (only on "last year's")  │            │                                       │
+│ Acme 2024 Renewal                     │            │ ⬜️ EDIT · 5f21ab90                     │
+│                                       │            │ Update the fee to $11,000             │
+│ Produced                              │            │   [ ✅ Approve ]   [ ❌ Reject ]        │
+│ 2 proposed change(s) awaiting review. │            ├───────────────────────────────────────┤
+│                                       │            │ [ Apply decisions ] [Approve all] [Reject all]│
+│      [ ⬇ Download current draft ]      │            └───────────────────────────────────────┘
+└───────────────────────────────────────┘             (a click updates THIS card: ⬜️→✅/❌)
+
+③ Result card (after Apply decisions)                 ④ Daily digest (say "digest" / scheduler)
+┌───────────────────────────────────────┐            ┌───────────────────────────────────────┐
+│ 🦉 SuperDocs                           │            │ SuperDocs — daily digest              │
+│    Acme Renewal Letter                 │            │ what this space produced              │
+├───────────────────────────────────────┤            ├───────────────────────────────────────┤
+│ ✅ Applied 1, rejected 1.              │            │ Produced (1)                          │
+│                                       │            │  Acme Renewal Letter                  │
+│   [ ⬇ Download Acme-Renewal.docx ]     │            │  1 applied, 1 rejected                │
+└───────────────────────────────────────┘            │                                       │
+   (real ~15-min signed storage URL)                 │ Waiting on someone (0)                │
+                                                      │  Nothing pending — nice.              │
+                                                      └───────────────────────────────────────┘
+```
+
+### Card lifecycle (which card the reviewer sees, and when)
+
+```mermaid
+stateDiagram-v2
+  [*] --> Summary_Approval: @mention request
+  Summary_Approval --> Summary_Approval: ✅/❌ per item<br/>(UPDATE_MESSAGE, no API write)
+  Summary_Approval --> Result: Apply / Approve all / Reject all<br/>(approve + export)
+  Summary_Approval --> ReadyToDownload: no changes to review<br/>(auto-applied creation)
+  Result --> [*]
+  ReadyToDownload --> [*]
+  Digest --> [*]
+  note right of Digest
+    "digest" command or the
+    daily scheduler endpoint —
+    independent of a review
+  end note
+```
+
 ## Legend / decisions
 - **Human gate:** nothing applies until *Apply decisions*; each change carries its own
   Approve/Reject; undecided changes default to **rejected** (never apply unreviewed work).
